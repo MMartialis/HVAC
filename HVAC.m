@@ -40,9 +40,9 @@ clc;clear;
 
 % All the symbolic variables that are used to define the differential equations
 % including inputs, outputs, states and parameters, 
-variables = { 'T_h', 'Delta_T', 'Delta_T_ext', 'Delta_m_dot_e', 'u_h', ...
-    'Delta_T_h', 'Delta_m_dot_i', 'u_bulb', 'L',...
-    'c_air', 'A', 'k', 'k_h', 'C', 'C_h', 'P_h', ...
+variables = { 'T_h', 'T', 'T_ext', 'L', ...
+    'm_dot_i', 'm_dot_e', 'u_h', 'u_bulb',...
+    'c_air', 'area', 'k', 'k_h', 'C', 'C_h', 'P_h', ...
     'P_bulb', 'eff_bulb', };
 
 
@@ -56,16 +56,8 @@ T_ext_0 = 20;        % Nominal temperature outside
 m_dot_e_0 = 0.001;       % Nominal airflow from outside
 m_dot_i_0 = 0.001;       % Nominal airflow recirculated
 
-% to be able to linearize the differentials, we redefine the control
-% variables to diviations around the nominal values.
-T = T_0 + Delta_T;
-T_h = T_h_0 + Delta_T_h;
-T_ext = T_ext_0 + Delta_T_ext;
-m_dot_e = m_dot_e_0 + Delta_m_dot_e;
-m_dot_i = m_dot_i_0 + Delta_m_dot_i;
-
 % Equations for heat change inside the room
-Q_loss = k * A * (T - T_ext);                                     % heat loss through the walls
+Q_loss = k * area * (T - T_ext);                                     % heat loss through the walls
 Q_vent = m_dot_e * c_air * (T_ext - T);                           % heat change from ventillation
 Q_heat = m_dot_e * c_air * (T_h - T_ext) ...
           + m_dot_i * c_air * (T_h - T);                          % added heat by heater element
@@ -86,12 +78,12 @@ dThdt = (Qh_heater - Qh_wall + Qh_vent) / C_h;
 
 % Define input, output and state vectors, as well as system of differential
 % equations
-ss_U = [Delta_m_dot_i; Delta_m_dot_e; u_bulb; u_h];  % inputs / controlled variables
-ss_X = [Delta_T; Delta_T_h];                                      % states
-ss_Y = [Delta_T; Delta_T_h; P_bulb * u_bulb * eff_bulb];          % outputs
+ss_U = [m_dot_i; m_dot_e; u_bulb; u_h];  % inputs / controlled variables
+ss_X = [T; T_h];                                      % states
+ss_Y = [T; T_h; P_bulb * u_bulb * eff_bulb];          % outputs
 % ss_f = [dTdt; dThdt]; % would be if already linear
 ss_f = taylor([dTdt; dThdt], [ ...
-    Delta_T, Delta_T_h, Delta_T_ext, Delta_m_dot_i, Delta_m_dot_e], ... % which variables are used to linearize
+    T, T_h, T_ext, m_dot_i, m_dot_e], ... % which variables are used to linearize
     'ExpansionPoint', ...
     [T_0, T_h_0, T_ext_0, m_dot_e_0, m_dot_i_0], ... % around what poins are they linearized
     'Order', 2);
@@ -110,7 +102,7 @@ c = 0.20; % side of the box (m)
 air_density = 1.225;            % kg/m3 
 V = a * b * c;                  % m3 air
 m_air = V * air_density;        % kg air
-A = 2*a*b+2*a*c+2*b*c;          % Surface area of walls (m²)
+area = 2*a*b+2*a*c+2*b*c;       % Surface area of walls (m²)
 k = 1;                          % Heat transfer coefficient of walls (W/m²°C)
 c_air = 1005;                   % Specific heat capacity of air (J/kg·°C)
 C = m_air*c_air;                % Thermal capacitance of air in the box (J/°C)
@@ -126,7 +118,7 @@ eff_bulb = 0.1;   % Efficiency as light (0.1 for halogen, i.e., 90% as heat, 10%
 
 %% Parameter values (stored in a struct for easy reuse)
 params = struct( ...
-    'A', A, ...
+    'area', area, ...
     'k', k, ...
     'C', C, ...
     'c_air', c_air, ...
@@ -149,10 +141,10 @@ paramNames = fieldnames(params);
 paramValues = struct2cell(params);
 
 % Substitute values for symbolic matrices
-A_num = subs(A_sym, paramNames, paramValues);
-B_num = subs(B_sym, paramNames, paramValues);
-C_num = subs(C_sym, paramNames, paramValues);
-D_num = subs(D_sym, paramNames, paramValues);
+A = subs(A_sym, paramNames, paramValues);
+B = subs(B_sym, paramNames, paramValues);
+C = subs(C_sym, paramNames, paramValues);
+D = subs(D_sym, paramNames, paramValues);
 
 % Display symbolic state-space matrices
 disp('Symbolic A matrix:');
@@ -166,21 +158,21 @@ mPretty(D_sym);
 
 % Display numerical state-space matrices
 disp('Numeric A matrix:');
-mPretty(A_num);
+mPretty(A);
 disp('Numeric B matrix:');
-mPretty(B_num);
+mPretty(B);
 disp('Numeric C matrix:');
-mPretty(C_num);
+mPretty(C);
 disp('Numeric D matrix:');
-mPretty(D_num);
+mPretty(D);
 
 % needed for using ss()
-A_num = double(A_num);
-B_num = double(B_num);
-C_num = double(C_num);
-D_num = double(D_num);
+A = double(A);
+B = double(B);
+C = double(C);
+D = double(D);
 
-model = ss(A_num, B_num, C_num, D_num);
+model = ss(A, B, C, D);
 
 disp('Is stable:');
 isstable(model)
@@ -192,30 +184,30 @@ disp('Controlability matrix:');
 ctrb(model)
 
 % Check observability
-Obs_matrix = obsv(A_num, C_num);
+Obs_matrix = obsv(A, C);
 disp('Rank of Observability Matrix:');
 disp(rank(Obs_matrix));
-if rank(Obs_matrix) < size(A_num, 1)
+if rank(Obs_matrix) < size(A, 1)
     error('System is not fully observable.');
 end
 
 % Desired observer poles (should be faster than the system poles)
-desired_observer_poles = eig(A_num) * 5;  % Place poles 5x faster than system
+desired_observer_poles = eig(A) * 5;  % Place poles 5x faster than system
 disp('Desired Observer Poles:');
 disp(desired_observer_poles);
 
 % Compute the observer gain (L)
-L_num = place(A_num', C_num', desired_observer_poles)';  % Transpose for MATLAB syntax
+L = place(A', C', desired_observer_poles)';  % Transpose for MATLAB syntax
 disp('Observer Gain Matrix L:');
-disp(L_num);
+disp(L);
 
 % designing LQR controller
-% X = [Delta_T; Delta_T_h]  % penatize bad performance
+% X = [T; T_h]  % penatize bad performance
 Q = [1 1].*eye(2); 
-% U = [Delta_T_ext; Delta_m_dot_i; Delta_m_dot_e; u_bulb; u_h];
+% U = [T_ext; m_dot_i; m_dot_e; u_bulb; u_h];
 % penatize actuator effort
 R = [1,1,1,1].*eye(4);
 
-K_num = lqr(A_num, B_num, Q, R);
+K = lqr(A, B, Q, R);
 
-N_num = [1,1,1,1].*eye(4);
+N = [1,1,1,1].*eye(4);
