@@ -1,9 +1,13 @@
 clc;clear;
-%%
 variables = {'T', 'T_h', 'T_ext', 'T_env', 'm_dot', 'v', 'c_air', 'A', 'k', 'k_h', 'C', 'C_h', 'u_h', 'h'};
+
 
 % Define all variables as symbolic using the list
 syms(variables{:});
+
+% Define state vector and input vector
+ss_X = [T; T_h];
+ss_U = [u_h; v; m_dot; T_ext];
 
 % Equations for heat change inside the room
 Q_loss = -k * A * (T - T_ext);              % heat loss through the walls
@@ -22,6 +26,9 @@ pretty(dTdt);
 % Heating element temperature change (dT_h/dt)
 dThdt = (u_h * h - k_h * (T_h - T_env) - m_dot * c_air * v * (T_h - T)) / C_h;
 pretty(dThdt);
+
+% Define f (state derivatives)
+ss_f = [dTdt; dThdt];
 
 clear(variables{:});
 %% 
@@ -48,6 +55,17 @@ T_init = 30;      % Initial room temperature (°C)
 T_h_init = 30;   % Initial heating element temperature (°C)
 initial_conditions = [T_init; T_h_init];
 
+%% Parameter values (stored in a struct for easy reuse)
+params = struct( ...
+    'A', 10, ...
+    'k', 0.5, ...
+    'C', 1000, ...
+    'c_air', 1005, ...
+    'C_h', 50, ...
+    'k_h', 0.1, ...
+    'h', 200 ...
+    );
+
 
 % % Verify equations are now numeric
 % dTdt_numeric = eval(dTdt);
@@ -59,7 +77,7 @@ initial_conditions = [T_init; T_h_init];
 % disp(dThdt_numeric);
 % Convert symbolic equations to numeric function handles
 dTdt_func = matlabFunction(dTdt, 'Vars', {'T', 'T_h', 'T_ext', 'm_dot', 'v', 'c_air', 'A', 'k', 'C'});
-dThdt_func = matlabFunction(dThdt, 'Vars', {'T', 'T_h', 'T_env', 'u_h', 'v', 'h', 'k_h', 'm_dot', 'c_air', 'C_h'});
+dThdt_func = matlabFunction(dThdt, 'Vars', {'T', 'T_h', 'T_env', 'u_h','v', 'h', 'k_h', 'm_dot', 'c_air', 'C_h'});
 
 % Define the system of equations for ode45 using these functions
 dTdt_system = @(t, X) [
@@ -83,3 +101,37 @@ xlabel('Time (s)');
 ylabel('Temperature (°C)');
 legend;
 title('Temperature Evolution in Room and Heating Element');
+
+% Calculate Jacobians symbolically
+A_sym = jacobian(ss_f, ss_X);   % System matrix
+B_sym = jacobian(ss_f, ss_U);   % Input matrix
+C_sym = eye(2);           % Output matrix (identity)
+D_sym = zeros(2, 3);      % Direct transmission matrix (zeros)
+
+% Substitute values for symbolic matrices
+A_num = subs(A_sym, {"A","k","C","c_air","C_h","k_h","h"}, {params.A,params.k,params.C,params.c_air,params.C_h,params.k_h,params.h});
+B_num = subs(B_sym, {"A","k","C","c_air","C_h","k_h","h"}, {params.A,params.k,params.C,params.c_air,params.C_h,params.k_h,params.h});
+C_num = double(C_sym);  % Identity matrix
+D_num = double(D_sym);  % Zero matrix
+
+
+% Display symbolic state-space matrices
+disp('Symbolic A matrix:');
+pretty(A_sym)
+disp('Symbolic B matrix:');
+pretty(B_sym)
+disp('Symbolic C matrix:');
+disp(C_sym);
+disp('Symbolic D matrix:');
+disp(D_sym);
+
+
+% Display numerical state-space matrices
+disp('Numeric A matrix:');
+pretty(A_num);
+disp('Numeric B matrix:');
+pretty(B_num);
+disp('Numeric C matrix:');
+disp(C_num);
+disp('Numeric D matrix:');
+disp(D_num);
