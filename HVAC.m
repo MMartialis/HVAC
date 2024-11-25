@@ -104,6 +104,10 @@ plant_f = taylor([dTdt; dThdt; dTextdt], [ ...
     [T_0, T_h_0, T_ext_0, m_dot_e_0, m_dot_i_0], ...         % around what poins are they linearized
     'Order', 2);
 
+plant_Y = piecewise(...
+    m_dot_e + m_dot_i == 0, [0; 0; P_bulb*eff_bulb*u_bulb], ... % Special case
+    plant_Y); % General case
+
 % clearing up after calculating symbolic equations
 clear(variables{:});    % this is needed as these variables are going to be
                         % redefined with values
@@ -149,10 +153,19 @@ params = struct( ...
 
 %% Calculating the state space matrices
 % Calculate Jacobians symbolically
+% Decompose outputs into state- and input-dependent parts
+
+ss_Y_X = subs(ss_Y, ss_U, zeros(size(ss_U)));  % Output dependent only on states
+ss_Y_U = ss_Y - ss_Y_X;                          % Output dependent only on inputs
+% Same for the plant
+plant_Y_X = subs(plant_Y, plant_U, zeros(size(plant_U)));  % Output dependent only on states
+plant_Y_U = plant_Y - plant_Y_X;                          % Output dependent only on inputs
+
+% Calculate Jacobians
 A_sym = jacobian(ss_f, ss_X);       % System matrix
 B_sym = jacobian(ss_f, ss_U);       % Input matrix
-C_sym = jacobian(ss_Y, ss_X);       % Output matrix for state response to outputs T and T_h
-D_sym = jacobian(ss_Y, ss_U);       % Direct input-output relationship
+C_sym = jacobian(ss_Y_X, ss_X);       % Output matrix for state response to outputs T and T_h
+D_sym = jacobian(ss_Y_U, ss_U);       % Direct input-output relationship
 
 % Convert struct fields to cell arrays for substitution
 paramNames = fieldnames(params);
@@ -167,8 +180,8 @@ D = subs(D_sym, paramNames, paramValues);
 % Calculate plant state space
 plant_A = subs(jacobian(plant_f, plant_X), paramNames, paramValues);        % System matrix
 plant_B = subs(jacobian(plant_f, plant_U), paramNames, paramValues);        % Input matrix
-plant_C = subs(jacobian(plant_Y, plant_X), paramNames, paramValues);        % Output matrix for state response to outputs T and T_h
-plant_D = subs(jacobian(plant_Y, plant_U), paramNames, paramValues);        % Direct input-output relationship
+plant_C = subs(jacobian(plant_Y_X, plant_X), paramNames, paramValues);        % Output matrix for state response to outputs T and T_h
+plant_D = subs(jacobian(plant_Y_U, plant_U), paramNames, paramValues);        % Direct input-output relationship
 
 % Display symbolic state-space matrices
 % disp('Symbolic A matrix:');
