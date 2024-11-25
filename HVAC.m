@@ -68,7 +68,9 @@ light = P_bulb * u_bulb * eff_bulb;                 % Illumination output (non-h
 
 % Room temperature change (dT/dt)
 dTdt = (-Q_loss + Q_vent + Q_heat + Q_bulb) / C;
-pretty(dTdt);
+
+T_vo = (m_dot_e * T_ext + m_dot_i * T) / (m_dot_e + m_dot_i);
+T_ho = T_vo + (P_h * u_h)/((m_dot_e + m_dot_i) * c_air);
 
 % Heating element temperature change (dT_h/dt)
 Qh_heater = u_h * P_h;
@@ -84,7 +86,7 @@ dTextdt = alpha * (T - T_ext);
 % equations
 ss_U = [m_dot_i; m_dot_e; u_bulb; u_h];                      % inputs / controlled variables
 ss_X = [T; T_h; T_ext];                                      % states
-ss_Y = [T; T_h; T_ext; P_bulb * u_bulb * eff_bulb];          % outputs
+ss_Y = [T; T_h; light];                                      % outputs
 % ss_f = [dTdt; dThdt];                                      % would be if already linear
 ss_f = taylor([dTdt; dThdt; dTextdt], [ ...
     T, T_h, T_ext, m_dot_i, m_dot_e], ...                    % which variables are used to linearize
@@ -95,7 +97,7 @@ ss_f = taylor([dTdt; dThdt; dTextdt], [ ...
 % Define second state space for plant simulation
 plant_U = [T_ext; m_dot_i; m_dot_e; u_bulb; u_h];            % inputs / controlled variables
 plant_X = [T; T_h; T_ext];                                   % states
-plant_Y = [T; T_h; T_ext; P_bulb * u_bulb * eff_bulb];       % outputs
+plant_Y = [T; T_vo; T_ho; P_bulb * u_bulb * eff_bulb];       % outputs
 plant_f = taylor([dTdt; dThdt; dTextdt], [ ...
     T, T_h, T_ext, m_dot_i, m_dot_e], ...                    % which variables are used to linearize
     'ExpansionPoint', ...
@@ -163,36 +165,32 @@ C = subs(C_sym, paramNames, paramValues);
 D = subs(D_sym, paramNames, paramValues);
 
 % Calculate plant state space
-plant_A = double(subs(jacobian(plant_f, plant_X), paramNames, paramValues));        % System matrix
-plant_B = double(subs(jacobian(plant_f, plant_U), paramNames, paramValues));        % Input matrix
-plant_C = double(subs(jacobian(plant_Y, plant_X), paramNames, paramValues));        % Output matrix for state response to outputs T and T_h
-plant_D = double(subs(jacobian(plant_Y, plant_U), paramNames, paramValues));        % Direct input-output relationship
+plant_A = subs(jacobian(plant_f, plant_X), paramNames, paramValues);        % System matrix
+plant_B = subs(jacobian(plant_f, plant_U), paramNames, paramValues);        % Input matrix
+plant_C = subs(jacobian(plant_Y, plant_X), paramNames, paramValues);        % Output matrix for state response to outputs T and T_h
+plant_D = subs(jacobian(plant_Y, plant_U), paramNames, paramValues);        % Direct input-output relationship
 
 % Display symbolic state-space matrices
-disp('Symbolic A matrix:');
-mPretty(A_sym);
-disp('Symbolic B matrix:');
-mPretty(B_sym);
-disp('Symbolic C matrix:');
-mPretty(C_sym);
-disp('Symbolic D matrix:');
-mPretty(D_sym);
+% disp('Symbolic A matrix:');
+% mPretty(A_sym);
+% disp('Symbolic B matrix:');
+% mPretty(B_sym);
+% disp('Symbolic C matrix:');
+% mPretty(C_sym);
+% disp('Symbolic D matrix:');
+% mPretty(D_sym);
 
 % Display numerical state-space matrices
-disp('Numeric A matrix:');
-mPretty(A);
-disp('Numeric B matrix:');
-mPretty(B);
-disp('Numeric C matrix:');
-mPretty(C);
-disp('Numeric D matrix:');
-mPretty(D);
+disp('Numeric A matrix:'); mPretty(plant_A);
+disp('Numeric B matrix:'); mPretty(plant_B);
+disp('Numeric C matrix:'); mPretty(plant_C);
+disp('Numeric D matrix:'); mPretty(plant_D); 
 
 % needed for using ss()
-A = double(A);
-B = double(B);
-C = double(C);
-D = double(D);
+A = double(A); plant_A = double(plant_A);
+B = double(B); plant_B = double(plant_B);
+C = double(C); plant_C = double(plant_C);
+D = double(D); plant_D = double(plant_D);
 
 model = ss(A, B, C, D);
 model_plant = ss(plant_A, plant_B, plant_C, plant_D);
@@ -231,11 +229,11 @@ disp(L);
 
 % designing LQR controller
 % X = [T; T_h; T_ext]  % penatize bad performance
-Q = [1 1 1].*eye(size(ss_X,1))
+Q = diag([1 1 1]);
 % U = [m_dot_i; m_dot_e; u_bulb; u_h];
 % penatize actuator effort
-R = [1 1 1 1].*eye(size(ss_U,1))
+R = diag([1 1 1 1]);
 
 K = lqr(A, B, Q, R)
 
-N = [1 1 1 1].*eye(4);
+N = diag([1 1 1 1]);
