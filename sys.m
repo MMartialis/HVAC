@@ -9,33 +9,16 @@ classdef sys
         U           % Cell array of input names
         X           % Cell array of state names
         Y           % Cell array of output names
+        Q
+        R
         f           % Array of differential equations (symbolic)
         h           % Output equations (symbolic)
-        h_X
-        h_U
-        h_X_num
-        h_U_num
         f_num       % Array of differential equations (symbolic)
         h_num       % Output equations (symbolic)
-        f_lin       % Linearized state equations (symbolic)
-        h_lin       % Linearized output equations (symbolic)
-        f_lin_num   % Linearized state equations with parameters (symbolic)
-        h_lin_num   % Linearized output equations with parameters (symbolic)
-        A
-        B
-        C
-        D
-        A_sym
-        B_sym
-        C_sym
-        D_sym
-        A_num
-        B_num
-        C_num
-        D_num
-        L
-        K
-        N
+        linVars
+        mesh
+        breakpoints
+        meshSizes
     end
 
     methods
@@ -59,7 +42,7 @@ classdef sys
             
         end
 
-        function obj = defineDynamics(obj, f, h)
+        function obj = defineDynamics(obj, f, h, linVars)
             %DEFINE DYNAMICS Define state and output equations
             %   f: symbolic array of state equations
             %   h: symbolic array of output equations
@@ -74,7 +57,8 @@ classdef sys
 
             obj.f = f;
             obj.h = h;
-
+            obj.linVars = linVars;
+            
             % Substitute parameter values
             paramNames = fieldnames(obj.params);
             paramValues = struct2cell(obj.params);
@@ -98,8 +82,8 @@ classdef sys
 
             func_str = sprintf([
                 'function [X_dot, Y]= %s(X, U) \n', ...
-                'X = X(:).'';\n', ...
-                'U = U(:).'';\n', ...
+                'X = X(:);\n', ...
+                'U = U(:);\n', ...
                 'plant = %s;\n', ...
                 '[a, b] = plant(X, U);\n', ...
                 'X_dot = a(:);\n', ...
@@ -113,117 +97,94 @@ classdef sys
 
         end
 
-        function funcHandle = toObserverFunction(obj, filename)
-            % Generates a function handle for nonlinear observer calculation
-            % Inputs:
-            %   obj: The sys object
-            % Outputs:
-            %   funcHandle: A function handle that computes X_hat from U and Y
-            
-            % Ensure symbolic variables exist for X, U, and Y
-            if isempty(obj.X) || isempty(obj.U) || isempty(obj.Y)
-                error('System must have symbolic X, U, and Y defined.');
-            end
-            
-            % Solve for X in terms of U and Y
-            % Equation to solve: Y = h(X, U) -> solve for X
-            try
-                X_hat_sym = solve(obj.h_num == obj.Y, obj.X);  % Rearrange for X
-                % Convert to a flat symbolic array if needed
-                if isstruct(X_hat_sym)
-                    X_hat_sym = struct2cell(X_hat_sym);  % Convert struct to cell
-                end
-                X_hat_sym = vertcat(X_hat_sym{:});  % Concatenate into a vector
-            catch ME
-                error('Could not solve for X. Ensure h is invertible with respect to X.\n%s', ME.message);
-            end
-        
-            % Generate function handle for observer
-            funcHandle = matlabFunction(X_hat_sym, ...
-                'Vars', {obj.U, obj.Y}, ...
-                'Outputs', {'X_hat'});
-
-            func_str = sprintf([
-                'function X_hat= %s(U, Y) \n', ...
-                'U = U(:).'';\n', ...
-                'Y = Y(:).'';\n', ...
-                'plant = %s;\n', ...
-                'X_hat = plant(X, U);\n', ...
-                'end'], filename, func2str(funcHandle));
-
-            % Write to file
-            fid = fopen(filename + '.m', 'w');
-            fprintf(fid, func_str);
-            fclose(fid);
-        end
-
-
-        function obj = linearize(obj, linVars, linVals)
+        function SS = getSS(obj, linVals)
             %LINEARIZE Linearize the system around given points
             %   linPoints: Struct with names and values for linearization
 
             if isempty(obj.f) || isempty(obj.h)
                 error('Define the dynamics (f and h) before linearization.');
             end
-
             % Use helper function to linearize
-            [obj.f_lin, obj.f_lin_num] = obj.performLinearization(obj.f, linVars, linVals);
-            [obj.h_lin, obj.h_lin_num] = obj.performLinearization(obj.h, linVars, linVals);
+            [f_lin, f_lin_num] = obj.performLin(obj.f, linVals);
+            [h_lin, h_lin_num] = obj.performLin(obj.h, linVals);
+            
+            % devide the ouptut equition into two parts, those dependent on
+            % inputs and those on states
+            h_X_num = subs(h_lin_num, obj.U, zeros(size(obj.U)));                   % Output dependent only on states
+            h_U_num = subs(h_lin_num, obj.X, zeros(size(obj.X)));  
+
+            % Calculate Jacobians for the A, B, C, and D matrices
+            SS.A = double(jacobian(f_lin_num, obj.X));             % System matrix
+            SS.B = double(jacobian(f_lin_num, obj.U));             % Input matrix
+            SS.C = double(jacobian(h_X_num, obj.X));               % Output matrix for state response
+            SS.D = double(jacobian(h_U_num, obj.U));               % Direct input-output relationship
         end
+
+        function SS = getL(obj, SS, multiplier)
+            
+            Obs_matrix = obsv(SS.A, SS.C);
+            if rank(Obs_matrix) < size(SS.A, 1)
+                error('System is not fully observable.');
+            end
+
+            desired_observer_poles = eig(SS.A) * multiplier;  
+            
+            SS.L = place(SS.A', SS.C', desired_observer_poles)';  
+        end
+
+        function SS = getX(obj, SS, Q, R)
+            SS.K = lqr(SS.A, SS.B, Q, R);
+        end
+
+
+        function obj = getMesh(obj)
+            % Determine the size of the mesh
+            obj.meshSizes = cellfun(@length, obj.breakpoints);  % Array of dimension sizes
+            total = prod(obj.meshSizes);  % Total number of elements in the mesh
         
-        function obj = computeSS(obj)
-            %COMPUTESTATESPACE Compute A, B, C, D state-space matrices
-            %   Computes symbolic and numerical state-space matrices based on dynamics
+            % Create the grid indices for iteration
+            [grid{1:numel(obj.breakpoints)}] = ndgrid(obj.breakpoints{:});
             
-            if isempty(obj.f) || isempty(obj.h)
-                error('Dynamics (f and h) must be defined before computing state-space matrices.');
+            % Flatten the grids into vectors for indexing in parfor
+            gridVectors = cellfun(@(x) x(:), grid, 'UniformOutput', false);
+        
+            % Preallocate the mesh cell array
+            mymesh = cell(obj.meshSizes);
+            % Use parfor to populate the mesh
+            fprintf('Calculating %.0f matrices \n', total);
+            for i = 1:100:total
+                fprintf("□");
             end
-    
-            % Decompose outputs into state- and input-dependent parts
-            
-            obj.h_X = subs(obj.h_lin, obj.U, zeros(size(obj.U)));                   % Output dependent only on states
-            obj.h_U = subs(obj.h_lin, obj.X, zeros(size(obj.X)));                                              % Output dependent only on inputs
+                fprintf("\n\n")
 
-            obj.h_X_num = subs(obj.h_lin_num, obj.U, zeros(size(obj.U)));                   % Output dependent only on states
-            obj.h_U_num = subs(obj.h_lin_num, obj.X, zeros(size(obj.X)));  
-
-            % Calculate Jacobians for the A, B, C, and D matrices
-            obj.A_sym = jacobian(obj.f_lin, obj.X);             % System matrix
-            obj.B_sym = jacobian(obj.f_lin, obj.U);             % Input matrix
-            obj.C_sym = jacobian(obj.h_X, obj.X);               % Output matrix for state response
-            obj.D_sym = jacobian(obj.h_U, obj.U);               % Direct input-output relationship
-    
-            % Calculate Jacobians for the A, B, C, and D matrices
-            obj.A = jacobian(obj.f_lin_num, obj.X);             % System matrix
-            obj.B = jacobian(obj.f_lin_num, obj.U);             % Input matrix
-            obj.C = jacobian(obj.h_X_num, obj.X);               % Output matrix for state response
-            obj.D = jacobian(obj.h_U_num, obj.U);               % Direct input-output relationship
-            
-            obj.A_num = double(obj.A);
-            obj.B_num = double(obj.B);
-            obj.C_num = double(obj.C);
-            obj.D_num = double(obj.D);
-
-        end
-    
-        function [A, B, C, D] = getSS(obj)
-            %GETSTATESPACE Return numerical state-space matrices
-            %   Outputs:
-            %       A, B, C, D: Numerical state-space matrices
-    
-            if isempty(obj.A)
-                error('State-space matrices have not been computed yet. Call computeSS first.');
+            parfor idx = 1:total
+                % Extract the linearization values (linVals) for this index
+                linVals = cellfun(@(vec) vec(idx), gridVectors, 'UniformOutput', false);
+        
+                % Compute the linearized system and store in the mesh
+                sys = obj.getSS(linVals);
+                sys = obj.getL(sys, 5);
+                sys = obj.getX(sys, obj.Q, obj.R);
+        
+                % Assign to the mesh
+                mymesh{idx} = sys;
+        
+                % Progress feedback (minimal overhead in parfor)
+                if mod(idx, 100) == 0 || idx == total
+                    fprintf('\b■\n', idx);
+                end
             end
-    
-            A = obj.A;
-            B = obj.B;
-            C = obj.C;
-            D = obj.D;
+        
+            % Assign to the object and save the result
+            obj.mesh = mymesh;
+            save("mesh.mat", "mymesh");
         end
+
     end
 
     methods (Access = private)
-        function [linEq, linNum] = performLinearization(obj, eq, subsVars, subsVals)
+        
+        function [linEq, linNum] = performLin(obj, eq, linVals)
             %PERFORMLINEARIZATION Helper to linearize equations
             %   eq: Array of symbolic equations to linearize
             %   subsVars: Cell array of variables to linearize
@@ -232,7 +193,7 @@ classdef sys
             % Substitute the linearization points
 
             % Linearize using Taylor expansion
-            linEq = taylor(eq, subsVars, 'ExpansionPoint', subsVals, 'Order', 2);
+            linEq = taylor(eq, obj.linVars, 'ExpansionPoint', linVals, 'Order', 2);
 
             % Substitute parameter values into the linearized model
             paramNames = fieldnames(obj.params);
@@ -243,3 +204,6 @@ classdef sys
 
     end
 end
+
+
+

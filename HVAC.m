@@ -38,8 +38,7 @@ C_r = m_air * c_air;                                                          % 
 % tube calc
 d_pipe = 0.035; % m
 A_pipe = ((d_pipe/2).^2)*pi;
-V_dot_multiplier = A_pipe;
-m_dot_multiplier = V_dot_multiplier * air_density;
+m_dot_multiplier = A_pipe * air_density;
 
 ss_plant = sys( ...    
     struct( ...  % params
@@ -49,19 +48,19 @@ ss_plant = sys( ...
         "Ch",                   3, ...
         "c_air",                c_air, ...
         "k_walls",              2, ...                     % heat loss from room to environment
-        "k_heater",             0.5, ...                     % heat loss from heater to environment
+        "k_heater",             3, ...                     % heat loss from heater to environment
         "k_h",                  10, ...                     % heat transfer coefficient from heater to passing air
         "P_l",                  20, ...
-        "P_h",                  112.5, ...
+        "P_h",                  11.5, ...
         "tau_s",                2, ...
         "tau_v",                2 ...
     ), ...
-    {'u_s', 'u_v', 'u_l', 'u_h'}, ...                        % U
-    {'T', 'T_h', 's', 'v'}, ...                              % X
-    {'T', 'T_hi', 'T_ho', 's', 'v', 'l'} ...                 % Y
+    {'u_s'; 'u_v'; 'u_l'; 'u_h'}, ...                        % U
+    {'T'; 'T_h'; 's'; 'v'}, ...                              % X
+    {'T'; 'T_h'; 'T_hi'; 'T_ho'; 's'; 'v'; 'l'} ...                 % Y
 );
 
-ss_plant.X_init = [20;20;0.2;0];
+ss_plant.X_init = [20;20;0.2;0.5];
 
 
 clearvars -except ss_plant
@@ -75,7 +74,6 @@ T_hi = S.v * S.T + (1 - S.v) * S.T_ext;
 T_ho = T_hi + S.k_h * S.u_h / s; % Prevent division by zero
 l = 1.3 + 1.6 * S.u_l;
 
-
 dT = ( ...
     S.k_walls * (S.T_ext - S.T) ...
     + S.P_l * S.u_l ...
@@ -84,59 +82,23 @@ dT = ( ...
 
 dT_h = ( ...
     S.k_heater * (S.T_ext - S.T_h) ...
-    + S.k_h * m_dot * S.c_air * (T_hi - T_ho) ...
+    - S.k_h * m_dot * S.c_air * (T_hi - T_ho) ...
     + S.P_h * S.u_h ...
 ) / S.Ch;
 
 ds = (S.u_s - S.s) / S.tau_s;
 dv = (S.u_v - S.v) / S.tau_v;
 
-
-
 % defining the system
-ss_plant = ss_plant.defineDynamics([dT, dT_h, ds, dv], [S.T, T_hi, T_ho, S.s, S.v, l]);
-clearvars -except ss_plant S
-
-%% solving for X, which is STUPID
-% f_eqn = sym.empty;
-% h_eqn = sym.empty;
-% for i=1:length(ss_plant.X)
-%     f_eqn(i) = ss_plant.X(:,i) == int(ss_plant.f(:,i), ss_plant.X(:,i));
-% end
-% for i=1:length(ss_plant.Y)
-%     h_eqn(i) = ss_plant.Y(:,i) == ss_plant.h(:,i);
-% end
-% [f_eqn,h_eqn]
-% solve(f_eqn)
-% solve([f_eqn,h_eqn], ss_plant.X)
-% ss_plant.h
-% ss_plant.U
-%
-%ss_plant.X
-%[diff(S.T), diff(S.T_h), diff(S.s), diff(S.v)]
-% 
-% ss_plant.Y
-% solve([[diff(S.T), diff(S.T_h), diff(S.s), diff(S.v)] == ss_plant.f; ...
-%     ss_plant.Y == ss_plant.h], ss_plant.X)
-% %% compute model properties
-% plant = ss_plant.toMatlabFunction("plantFunction");
- 
-
-%% linearizing
-% [X_dot, Y] = plant([20, 20, 20], [20, 0.01, 0.01, 1, 0]);
-
-ss_plant = ss_plant.linearize( ...
-    [S.T, S.T_h, S.s, S.v], ...
-    [20, 70, 0.8, 0.5] ...
+ss_plant = ss_plant.defineDynamics( ...
+    [dT; dT_h; ds; dv], ...                 % f
+    [S.T; S.T_h; T_hi; T_ho; S.s; S.v; l], ...     % h
+    [S.T; S.T_h; S.s; S.v] ...              % linVars
     );
+ss_plant.toMatlabFunction("plantFunction");
+ss_plant.Q = diag([1 1 1 1]);
+ss_plant.R = diag([1 1 1 1]);
+clearvars -except ss_plant S
+ss_plant.breakpoints = {-20:10:80, -20:10:200, 0:0.2:4, 0:0.1:1};
+ss_plant = ss_plant.getMesh();
 
-
-ss_plant = ss_plant.computeSS();
- mPretty(ss_plant.A);
- mPretty(ss_plant.B);
- mPretty(ss_plant.C);
- mPretty(ss_plant.D);
- model = ss(double(ss_plant.getSS()));
- 
- isstable(model)
- step(model)
