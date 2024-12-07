@@ -16,6 +16,8 @@ classdef sys
         f_num       % Array of differential equations (symbolic)
         h_num       % Output equations (symbolic)
         linVars
+        linVars_X
+        linVars_U
         mesh
         breakpoints
         meshSizes
@@ -58,6 +60,9 @@ classdef sys
             obj.f = f;
             obj.h = h;
             obj.linVars = linVars;
+
+            obj.linVars_X = intersect(obj.linVars, obj.X);
+            obj.linVars_U = intersect(obj.linVars, obj.U);
             
             % Substitute parameter values
             paramNames = fieldnames(obj.params);
@@ -108,6 +113,19 @@ classdef sys
             [f_lin, f_lin_num] = obj.performLin(obj.f, linVals);
             [h_lin, h_lin_num] = obj.performLin(obj.h, linVals);
             
+
+            SS.x_0 = zeros(size(obj.X));
+            SS.u_0 = zeros(size(obj.U));
+            
+            % Extract linearization points
+            SS.x_0 = [linVals{:}]';
+
+            % Solve for input bias u_0 such that f(x_0, u_0) = 0
+            SS.u_0 = double(struct2array(solve(subs(obj.f_num, obj.X, SS.x_0) == 0, obj.U))');
+        
+            % Calculate output bias y_0 = h(x_0, u_0)
+            SS.y_0 = double(subs(obj.h_num, [obj.X; obj.U], [SS.x_0; SS.u_0]));
+    
             % devide the ouptut equition into two parts, those dependent on
             % inputs and those on states
             h_X_num = subs(h_lin_num, obj.U, zeros(size(obj.U)));                   % Output dependent only on states
@@ -163,7 +181,7 @@ classdef sys
         
                 % Compute the linearized system and store in the mesh
                 sys = obj.getSS(linVals);
-                sys = obj.getL(sys, 5);
+                sys = obj.getL(sys, 3);
                 sys = obj.getX(sys, obj.Q, obj.R);
         
                 % Assign to the mesh
