@@ -96,7 +96,7 @@ classdef sys
                 'end'], filename, func2str(funcHandle));
 
             % Write to file
-            fid = fopen(filename + '.m', 'w');
+            fid = fopen("generated/" + filename + '.m', 'w');
             fprintf(fid, func_str);
             fclose(fid);
 
@@ -181,7 +181,7 @@ classdef sys
         
                 % Compute the linearized system and store in the mesh
                 sys = obj.getSS(linVals);
-                sys = obj.getL(sys, 3);
+                sys = obj.getL(sys, 5);
                 sys = obj.getX(sys, obj.Q, obj.R);
         
                 % Assign to the mesh
@@ -195,7 +195,7 @@ classdef sys
         
             % Assign to the object and save the result
             obj.mesh = mymesh;
-            save("mesh.mat", "mymesh");
+            save("generated/mesh.mat", "mymesh");
         end
 
     end

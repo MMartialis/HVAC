@@ -99,6 +99,6 @@ ss_plant.toMatlabFunction("plantFunction");
 ss_plant.Q = diag([1 1 1 1]);
 ss_plant.R = diag([1 1 1 1]);
 clearvars -except ss_plant S
-ss_plant.breakpoints = {10:20:80, 0:40:200, 0:1:4, 0:0.25:1};
-ss_plant = ss_plant.getMesh();
+ss_plant.breakpoints = {-20:10:80, 0:20:200, 0:0.5:4, 0:0.1:1};
+% ss_plant = ss_plant.getMesh();
 
