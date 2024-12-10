@@ -55,13 +55,12 @@ ss_plant = sys( ...
         "tau_s",                2, ...
         "tau_v",                2 ...
     ), ...
-    {'u_s'; 'u_v'; 'u_l'; 'u_h'}, ...                        % U
-    {'T'; 'T_h'; 's'; 'v'}, ...                              % X
-    {'T'; 'T_h'; 'T_hi'; 'T_ho'; 's'; 'v'; 'l'} ...                 % Y
+    {'u_s'; 'u_v'; 'u_l'; 'u_h'}, ...                % U
+    {'T'; 'T_h'; 's'; 'v'}, ...                      % X
+    {'T'; 'T_ho'; 's'; 'v'; 'l'} ...                 % Y
 );
 
 ss_plant.X_init = [20;20;0.2;0.5];
-
 
 clearvars -except ss_plant
 %% define equations 
@@ -92,13 +91,15 @@ dv = (S.u_v - S.v) / S.tau_v;
 % defining the system
 ss_plant = ss_plant.defineDynamics( ...
     [dT; dT_h; ds; dv], ...                 % f
-    [S.T; S.T_h; T_hi; T_ho; S.s; S.v; l], ...     % h
+    [S.T; T_ho; S.s; S.v; l], ...     % h
     [S.T; S.T_h; S.s; S.v] ...              % linVars
     );
 ss_plant.toMatlabFunction("plantFunction");
-ss_plant.Q = diag([1 1 1 1]);
-ss_plant.R = diag([1 1 1 1]);
+ss_plant.observerMultiplier = 5;
+
+ss_plant.Q = diag([1 0.001 0.001 0.001]); % {'T'; 'T_h'; 's'; 'v'}
+ss_plant.R = diag([0.2 0.01 1 4]); % {'u_s'; 'u_v'; 'u_l'; 'u_h'}
 clearvars -except ss_plant S
 ss_plant.breakpoints = {-20:10:80, 0:20:200, 0:0.5:4, 0:0.1:1};
-% ss_plant = ss_plant.getMesh();
+ss_plant = ss_plant.getMesh();
 

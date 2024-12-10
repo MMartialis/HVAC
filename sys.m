@@ -21,6 +21,7 @@ classdef sys
         mesh
         breakpoints
         meshSizes
+        observerMultiplier
     end
 
     methods
@@ -138,14 +139,14 @@ classdef sys
             SS.D = double(jacobian(h_U_num, obj.U));               % Direct input-output relationship
         end
 
-        function SS = getL(obj, SS, multiplier)
+        function SS = getL(obj, SS)
             
             Obs_matrix = obsv(SS.A, SS.C);
             if rank(Obs_matrix) < size(SS.A, 1)
                 error('System is not fully observable.');
             end
 
-            desired_observer_poles = eig(SS.A) * multiplier;  
+            desired_observer_poles = eig(SS.A) * obj.observerMultiplier;  
             
             SS.L = place(SS.A', SS.C', desired_observer_poles)';  
         end
@@ -153,7 +154,6 @@ classdef sys
         function SS = getX(obj, SS, Q, R)
             SS.K = lqr(SS.A, SS.B, Q, R);
         end
-
 
         function obj = getMesh(obj)
             % Determine the size of the mesh
@@ -181,7 +181,7 @@ classdef sys
         
                 % Compute the linearized system and store in the mesh
                 sys = obj.getSS(linVals);
-                sys = obj.getL(sys, 5);
+                sys = obj.getL(sys);
                 sys = obj.getX(sys, obj.Q, obj.R);
         
                 % Assign to the mesh
