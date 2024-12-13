@@ -26,7 +26,11 @@ classdef sys
 
     methods
         function obj = sys(params, U, X, Y)
-            % Constructor to initialize parameters, inputs, states, and outputs
+            %CONSTRUCTOR Create system object
+            %   U: input vector
+            %   X: state vector
+            %   Y: output vector
+
             obj.params = params;
 
             % Create symbolic variables
@@ -39,6 +43,7 @@ classdef sys
             for i = 1:numel(symsList)
                 obj.symbols.(symsList{i}) = eval(symsList{i});
             end
+            % creating the 
             obj.U = arrayfun(@(x) obj.symbols.(x{1}), U, 'UniformOutput', true);
             obj.X = arrayfun(@(u) obj.symbols.(u{1}), X, 'UniformOutput', true);
             obj.Y = arrayfun(@(y) obj.symbols.(y{1}), Y, 'UniformOutput', true);
@@ -49,6 +54,7 @@ classdef sys
             %DEFINE DYNAMICS Define state and output equations
             %   f: symbolic array of state equations
             %   h: symbolic array of output equations
+            %   linVars: which variables cause nonliear characteristics?
             
             % Check dimensions
             if numel(f) ~= numel(obj.X)
@@ -105,7 +111,7 @@ classdef sys
 
         function SS = getSS(obj, linVals)
             %LINEARIZE Linearize the system around given points
-            %   linPoints: Struct with names and values for linearization
+            %   linVals: Struct with names and values for linearization
 
             if isempty(obj.f) || isempty(obj.h)
                 error('Define the dynamics (f and h) before linearization.');
@@ -114,19 +120,25 @@ classdef sys
             [f_lin, f_lin_num] = obj.performLin(obj.f, linVals);
             [h_lin, h_lin_num] = obj.performLin(obj.h, linVals);
             
-
+            % initialize variables to hold linearization bias values
             SS.x_0 = zeros(size(obj.X));
             SS.u_0 = zeros(size(obj.U));
+            SS.y_0 = zeros(size(obj.Y));
             
             % Extract linearization points
             SS.x_0 = [linVals{:}]';
 
             % Solve for input bias u_0 such that f(x_0, u_0) = 0
             SS.u_0 = double(struct2array(solve(subs(obj.f_num, obj.X, SS.x_0) == 0, obj.U))');
-        
+            % Whenever one variable is defined in two equations, and there
+            % is no solution, just ignore the last equation
+            if isempty(SS.u_0)
+                SS.u_0 = double(struct2array(solve(subs(obj.f_num(1:end-1,:), obj.X(1:end-1,:), SS.x_0(1:end-1,:)) == 0, obj.U))');
+            end
+
             % Calculate output bias y_0 = h(x_0, u_0)
             SS.y_0 = double(subs(obj.h_num, [obj.X; obj.U], [SS.x_0; SS.u_0]));
-    
+            
             % devide the ouptut equition into two parts, those dependent on
             % inputs and those on states
             h_X_num = subs(h_lin_num, obj.U, zeros(size(obj.U)));                   % Output dependent only on states
@@ -140,6 +152,8 @@ classdef sys
         end
 
         function SS = getL(obj, SS)
+            %GET OBSERVER Calculate L matrix for observer
+            %   SS: SS object given by getSS() function
             
             Obs_matrix = obsv(SS.A, SS.C);
             if rank(Obs_matrix) < size(SS.A, 1)
@@ -151,8 +165,20 @@ classdef sys
             SS.L = place(SS.A', SS.C', desired_observer_poles)';  
         end
 
-        function SS = getX(obj, SS, Q, R)
+        function SS = getK(obj, SS, Q, R)
+            %GET CONTROLLER Calculate K matrix using lqr
+            %   SS: SS object given by getSS() function
+
             SS.K = lqr(SS.A, SS.B, Q, R);
+        end
+
+        function SS = getN_bar(obj, SS)
+            %GET N_bar Calculate N_bar for referece gain
+            %   SS: SS object given by getSS() function
+
+            M = SS.C*(inv(SS.A-SS.B*SS.K))*SS.B;
+            % using presudo inverse in case there more inputs then states
+            SS.N_bar = -pinv(M);  
         end
 
         function obj = getMesh(obj)
@@ -169,12 +195,19 @@ classdef sys
             % Preallocate the mesh cell array
             mymesh = cell(obj.meshSizes);
             % Use parfor to populate the mesh
+            parpool;
             fprintf('Calculating %.0f matrices \n', total);
-            for i = 1:100:total
+
+            % improvized progress bar for parralel processing
+            progressBarLenght = 75; % change this for longer or shorter progress bars
+            progressBarStep = floor(total / progressBarLenght);
+            for i = 1:progressBarStep:total
                 fprintf("□");
             end
                 fprintf("\n\n")
-
+            
+            % for every mesh point, calculate the state space, ovserver and
+            % controller
             parfor idx = 1:total
                 % Extract the linearization values (linVals) for this index
                 linVals = cellfun(@(vec) vec(idx), gridVectors, 'UniformOutput', false);
@@ -182,13 +215,14 @@ classdef sys
                 % Compute the linearized system and store in the mesh
                 sys = obj.getSS(linVals);
                 sys = obj.getL(sys);
-                sys = obj.getX(sys, obj.Q, obj.R);
+                sys = obj.getK(sys, obj.Q, obj.R);
+                sys = obj.getN_bar(sys);
         
                 % Assign to the mesh
                 mymesh{idx} = sys;
         
                 % Progress feedback (minimal overhead in parfor)
-                if mod(idx, 100) == 0 || idx == total
+                if mod(idx, progressBarStep) == 0 || idx == total
                     fprintf('\b■\n', idx);
                 end
             end

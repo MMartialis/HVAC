@@ -24,20 +24,19 @@ clc;clear;
 
 % System Constants for Room
 % a*b*c sized acrylic box
-a = 0.20;                                                                   % side of the box (m)
-b = 0.20;                                                                   % side of the box (m)
-c = 0.20;                                                                   % side of the box (m)
-
-rho = 1.225;                                                        % kg/m3 
-V = a * b * c;                                                              % m3 air
-m_air = V * rho;                                                    % kg air
-A_room = 2*a*b + 2*b*c + 2*a*c;                                                    
-c_air = 1005;                                                               % Specific heat capacity of air (J/kg·°C)
-C_r = m_air * c_air;                                                          % Thermal capacitance of air in the box (J/°C)
+a = 0.20;                             % side of the box (m)
+b = 0.20;                             % side of the box (m)
+c = 0.20;                             % side of the box (m)
+rho = 1.225;                          % kg/m3 
+V = a * b * c;                        % m3 air
+m_air = V * rho;                      % kg air
+A_room = 2*a*b + 2*b*c + 2*a*c;       % Area of the walls of the room (m^2)
+c_air = 1005;                         % Specific heat capacity of air (J/kg·°C)
+C_r = m_air * c_air;                  % Thermal capacitance of air in the box (J/°C)
 
 % tube calc
-d_pipe = 0.035; % m
-A_pipe = ((d_pipe/2).^2)*pi;
+d_pipe = 0.035;                       % diameter of the pipe (m)
+A_pipe = ((d_pipe/2).^2)*pi;          % circumference of the pipe (m) 
 
 ss_plant = sys( ...    
     struct( ...  % params
@@ -53,25 +52,29 @@ ss_plant = sys( ...
         "P_l",                  20, ...
         "P_h",                  112.5, ...
         "tau_s",                2, ...
-        "tau_v",                2 ...
+        "tau_v",                2, ...
+        "tau_l",                0.02, ...
+        "s_min",                0.2, ...
+        "l_min",                1.3, ...
+        "l_max",                8 ...
     ), ...
-    {'u_s'; 'u_v'; 'u_l'; 'u_h'}, ...                % U
-    {'T'; 'T_h'; 's'; 'v'}, ...                      % X
-    {'T'; 'T_ho'; 's'; 'v'; 'l'} ...                 % Y
+    {'u_s'; 'u_v'; 'u_l'; 'u_h'}, ...    % U
+    {'T'; 'T_h'; 's'; 'v'; 'l'}, ...     % X
+    {'T'; 'T_ho'; 's'; 'v'; 'l'} ...     % Y
 );
 
-ss_plant.X_init = [20;20;0.2;0.5];
+ss_plant.X_init = [21;21;0.2;0.5;1.3];
 
 clearvars -except ss_plant
 %% define equations 
 % Define the symbolic equations using the variables from the system object
 S = ss_plant.symbols; % Access symbolic variables
-s = S.s + 0.2;
+s = S.s + S.s_min;
 m_dot = s * S.rho * S.A_pipe;
 
 T_hi = S.v * S.T + (1 - S.v) * S.T_ext;
-T_ho = T_hi + (S.c_air * S.rho * s * S.A_pipe * (S.T_h - T_hi) / (m_dot * S.c_air)); % Prevent division by zero
-l = 1.3 + 1.6 * S.u_l;
+T_ho = T_hi + (S.c_air * S.rho * s * S.A_pipe * (S.T_h - T_hi) ...
+        / (m_dot * S.c_air));
 
 dT = ( ...
     S.k_walls * S.A_room * (S.T_ext - S.T) ...
@@ -87,19 +90,23 @@ dT_h = ( ...
 
 ds = (S.u_s - S.s) / S.tau_s;
 dv = (S.u_v - S.v) / S.tau_v;
+dl = ((S.l_min + S.u_l * (S.l_max - S.l_min)) - S.l) / S.tau_l;
 
 % defining the system
 ss_plant = ss_plant.defineDynamics( ...
-    [dT; dT_h; ds; dv], ...                 % f
-    [S.T; T_ho; S.s; S.v; l], ...     % h
-    [S.T; S.T_h; S.s; S.v] ...              % linVars
+    [dT; dT_h; ds; dv; dl], ...                             % f
+    [S.T; T_ho; S.s + S.s_min; S.v; S.l + S.l_min], ...     % h
+    [S.T; S.T_h; S.s; S.v; S.l] ...                         % linVars
     );
+% Creating function for nonlinear plant block
 ss_plant.toMatlabFunction("plantFunction");
+% How much faster should the observer be compared to the plant
 ss_plant.observerMultiplier = 5;
 
-ss_plant.Q = diag([1 0.001 0.001 0.001]); % {'T'; 'T_h'; 's'; 'v'}
-ss_plant.R = diag([0.2 0.01 1 4]); % {'u_s'; 'u_v'; 'u_l'; 'u_h'}
-clearvars -except ss_plant S
-ss_plant.breakpoints = {-20:10:80, 0:20:200, 0:0.5:4, 0:0.1:1};
+ss_plant.Q = diag([1 0.001 0.001 0.001 3]);     % {'T'; 'T_h'; 's'; 'v'; 'l'}
+ss_plant.R = diag([0.001 0.001 3 1]);           % {'u_s'; 'u_v'; 'u_l'; 'u_h'}
+% list of linearization points for creating the mesh
+ss_plant.breakpoints = {20:20:80, 20:20:200, 0.2:1:6.2, 0:0.25:1, 1:2:6};
+% generating mesh file. This will run for a while :(
 ss_plant = ss_plant.getMesh();
 
