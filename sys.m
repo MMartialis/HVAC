@@ -3,18 +3,18 @@ classdef sys
     %   Creates symbolic variables and equations for dynamic systems.
     
     properties
-        params      % Struct containing parameter names and values
-        symbols     % Struct to store symbolic variables
-        X_init      % Initial conditions for plant simulation
-        U           % Cell array of input names
-        X           % Cell array of state names
-        Y           % Cell array of output names
+        params    % Struct containing parameter names and values
+        symbols   % Struct to store symbolic variables
+        X_init    % Initial conditions for plant simulation
+        U         % Cell array of input names
+        X         % Cell array of state names
+        Y         % Cell array of output names
         Q
         R
-        f           % Array of differential equations (symbolic)
-        h           % Output equations (symbolic)
-        f_num       % Array of differential equations (symbolic)
-        h_num       % Output equations (symbolic)
+        f         % Array of differential equations (symbolic)
+        h         % Output equations (symbolic)
+        f_num     % Array of differential equations (symbolic)
+        h_num     % Output equations (symbolic)
         linVars
         linVars_X
         linVars_U
@@ -44,9 +44,12 @@ classdef sys
                 obj.symbols.(symsList{i}) = eval(symsList{i});
             end
             % creating the 
-            obj.U = arrayfun(@(x) obj.symbols.(x{1}), U, 'UniformOutput', true);
-            obj.X = arrayfun(@(u) obj.symbols.(u{1}), X, 'UniformOutput', true);
-            obj.Y = arrayfun(@(y) obj.symbols.(y{1}), Y, 'UniformOutput', true);
+            obj.U = arrayfun(@(x) obj.symbols.(x{1}), U, ...
+                'UniformOutput', true);
+            obj.X = arrayfun(@(u) obj.symbols.(u{1}), X, ...
+                'UniformOutput', true);
+            obj.Y = arrayfun(@(y) obj.symbols.(y{1}), Y, ...
+                'UniformOutput', true);
             
         end
 
@@ -58,10 +61,12 @@ classdef sys
             
             % Check dimensions
             if numel(f) ~= numel(obj.X)
-                error('Number of state equations (f) must match number of states (X).');
+                error(['Number of state equations (f)' ...
+                    ' must match number of states (X).']);
             end
             if numel(h) ~= numel(obj.Y)
-                error('Number of output equations (h) must match number of outputs (Y).');
+                error(['Number of output equations (h)' ...
+                    ' must match number of outputs (Y).']);
             end
 
             obj.f = f;
@@ -114,7 +119,8 @@ classdef sys
             %   linVals: Struct with names and values for linearization
 
             if isempty(obj.f) || isempty(obj.h)
-                error('Define the dynamics (f and h) before linearization.');
+                error(['Define the dynamics (f and h)' ...
+                    ' before linearization.']);
             end
             % Use helper function to linearize
             [f_lin, f_lin_num] = obj.performLin(obj.f, linVals);
@@ -129,11 +135,14 @@ classdef sys
             SS.x_0 = [linVals{:}]';
 
             % Solve for input bias u_0 such that f(x_0, u_0) = 0
-            SS.u_0 = double(struct2array(solve(subs(obj.f_num, obj.X, SS.x_0) == 0, obj.U))');
+            SS.u_0 = double(struct2array(solve( ...
+                subs(obj.f_num, obj.X, SS.x_0) == 0, obj.U))');
             % Whenever one variable is defined in two equations, and there
             % is no solution, just ignore the last equation
             if isempty(SS.u_0)
-                SS.u_0 = double(struct2array(solve(subs(obj.f_num(1:end-1,:), obj.X(1:end-1,:), SS.x_0(1:end-1,:)) == 0, obj.U))');
+                SS.u_0 = double(struct2array(solve( ...
+                    subs(obj.f_num(1:end-1,:), obj.X(1:end-1,:), ...
+                    SS.x_0(1:end-1,:)) == 0, obj.U))');
             end
 
             % Calculate output bias y_0 = h(x_0, u_0)
@@ -141,14 +150,14 @@ classdef sys
             
             % devide the ouptut equition into two parts, those dependent on
             % inputs and those on states
-            h_X_num = subs(h_lin_num, obj.U, zeros(size(obj.U)));                   % Output dependent only on states
-            h_U_num = subs(h_lin_num, obj.X, zeros(size(obj.X)));  
+            h_X_lin_num = subs(h_lin_num, obj.U, zeros(size(obj.U)));              
+            h_U_lin_num = subs(h_lin_num, obj.X, zeros(size(obj.X)));  
 
             % Calculate Jacobians for the A, B, C, and D matrices
-            SS.A = double(jacobian(f_lin_num, obj.X));             % System matrix
-            SS.B = double(jacobian(f_lin_num, obj.U));             % Input matrix
-            SS.C = double(jacobian(h_X_num, obj.X));               % Output matrix for state response
-            SS.D = double(jacobian(h_U_num, obj.U));               % Direct input-output relationship
+            SS.A = double(jacobian(f_lin_num, obj.X));     % System matrix
+            SS.B = double(jacobian(f_lin_num, obj.U));     % Input matrix
+            SS.C = double(jacobian(h_X_lin_num, obj.X));   % Output matrix for state response
+            SS.D = double(jacobian(h_U_lin_num, obj.U));   % Direct input-output relationship
         end
 
         function SS = getL(obj, SS)
@@ -195,7 +204,11 @@ classdef sys
             % Preallocate the mesh cell array
             mymesh = cell(obj.meshSizes);
             % Use parfor to populate the mesh
-            parpool;
+            p = gcp('nocreate');
+            if isempty(p)
+                % There is no parallel pool
+                parpool;
+            end
             fprintf('Calculating %.0f matrices \n', total);
 
             % improvized progress bar for parralel processing
@@ -245,7 +258,8 @@ classdef sys
             % Substitute the linearization points
 
             % Linearize using Taylor expansion
-            linEq = taylor(eq, obj.linVars, 'ExpansionPoint', linVals, 'Order', 2);
+            linEq = taylor(eq, obj.linVars, 'ExpansionPoint', ...
+                linVals, 'Order', 2);
 
             % Substitute parameter values into the linearized model
             paramNames = fieldnames(obj.params);
